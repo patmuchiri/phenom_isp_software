@@ -38,7 +38,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'isp.apps.IspConfig',
-    'django_celery_results'
+    'django_celery_results',
+    "crispy_forms",
+    "crispy_bootstrap5",
 ]
 
 MIDDLEWARE = [
@@ -127,7 +129,12 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CELERY_TIMEZONE = "Africa/Nairobi"
 CELERY_TASK_TRACK_STARTED = True
+CELERY_BROKER_URL = 'amqp://guest:guest@gachara.pythonanywhere.com/'
+
+CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
 CELERY_RESULT_BACKEND = 'django-db'
 CELERY_CACHE_BACKEND = 'django-cache'
 CELERY_BEAT_SCHEDULE = {
@@ -140,3 +147,5 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 10,
     },
 }
+CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
+CRISPY_TEMPLATE_PACK = "bootstrap5"

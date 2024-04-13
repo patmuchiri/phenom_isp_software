@@ -1,12 +1,15 @@
 amqp==5.2.0
+asgiref==3.8.1
 billiard==4.2.0
 celery==5.3.6
 click==8.1.7
 click-didyoumean==0.3.1
 click-plugins==1.1.1
 click-repl==0.3.0
+crispy-bootstrap5==2024.2
 Django==5.0.4
 django-celery-results==2.5.1
+django-crispy-forms==2.1
 kombu==5.3.7
 prompt-toolkit==3.0.43
 python-dateutil==2.9.0.post0

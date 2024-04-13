@@ -1,9 +1,11 @@
 # urls.py
 from django.urls import path
-from .views import signup,check_subscription_view
+from .views import signup,signin,home,view_customer
 
 urlpatterns = [
-    path('', signup, name='signup'),
-    path('check/',check_subscription_view,name='check_subscription_status'),
+    path('signup', signup, name='signup'),
+    path('',signin,name='signin'),
+    path('home',home,name='home'),
+    path('view_customer/<int:id>',view_customer,name='view_customer'),
     # Add other URL patterns as needed
 ]
