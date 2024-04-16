@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 from pathlib import Path
+from django.contrib import messages
 from celery.schedules import crontab
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,7 +26,7 @@ SECRET_KEY = 'django-insecure-0%7dtqs0j0v-w$p15i1!*#+3ep(%)c1nlw9_0pm--n4yy)2ag%
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["gachara.pythonanywhere.com"]
 
 
 # Application definition
@@ -41,6 +42,7 @@ INSTALLED_APPS = [
     'django_celery_results',
     "crispy_forms",
     "crispy_bootstrap5",
+    'django.contrib.humanize',
 ]
 
 MIDDLEWARE = [
@@ -129,7 +131,7 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CELERY_TIMEZONE = "Africa/Nairobi"
 CELERY_TASK_TRACK_STARTED = True
-CELERY_BROKER_URL = 'amqp://guest:guest@gachara.pythonanywhere.com/'
+
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_TIME_LIMIT = 30 * 60
@@ -140,12 +142,21 @@ CELERY_CACHE_BACKEND = 'django-cache'
 CELERY_BEAT_SCHEDULE = {
     'check-subscription-every-10-seconds': {
         'task': 'isp.tasks.check_subscription_status',
-        'schedule': 15,
+        'schedule': 30,
     },
     'activate-user': {
         'task': 'isp.tasks.activate_subscription',
-        'schedule': 10,
+        'schedule': 30,
     },
 }
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
 CRISPY_TEMPLATE_PACK = "bootstrap5"
+
+
+MESSAGE_TAGS = {
+    messages.DEBUG: 'alert-info',
+    messages.INFO: 'alert-info',
+    messages.SUCCESS: 'alert alert-success alert-dismissible fade show',
+    messages.WARNING: 'alert-warning',
+    messages.ERROR: 'alert alert-danger alert-dismissible fade show',
+}

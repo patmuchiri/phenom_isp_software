@@ -1,19 +1,40 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Permission
 
 from .models import Customer
 
-class CustomerSignupForm(UserCreationForm):
-    subscription = forms.BooleanField(required=False)
-    last_payment = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
-    name = forms.CharField(widget=forms.TextInput(attrs={'placeholder': 'Name'}))
-    phone = forms.CharField(widget=forms.TextInput(attrs={'placeholder': 'Phone Number'}))
+class CustomerSignupForm(forms.ModelForm):
     class Meta:
-        model = User
-        fields = ['username','name', 'email', 'phone','subscription','last_payment','password','password2',]
+        model = Customer
+        fields = "__all__"
+        widgets = {
+            'last_payment':forms.DateInput(attrs={'type': 'date',"min":"2022-01-01"}),
+            "router_ip_address":forms.TextInput(attrs={'type':'ipv4'})
+        }
+
+
+
 
 
 class Signin_form(forms.Form):
     username = forms.CharField(label='Username',max_length=30)
     password = forms.CharField(label='Password',max_length=30,widget=forms.PasswordInput(attrs={"type":"password"}))
+
+
+
+class StaffSignupForm(UserCreationForm):
+    permissions = forms.ModelMultipleChoiceField(
+        queryset=Permission.objects.all(),
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+        label='Permissions'
+    )
+
+    class Meta:
+        model = User
+        fields = ('username','first_name', 'email', 'password1', 'password2','is_superuser','is_staff','permissions')
+
+    def __init__(self, *args, **kwargs):
+        super(StaffSignupForm, self).__init__(*args, **kwargs)
+        self.fields['permissions'].queryset = Permission.objects.all()
