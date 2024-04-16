@@ -3,8 +3,9 @@ from django.db import models
 
 # Create your models here.
 class Customer(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
+    router_ip_address = models.GenericIPAddressField()
+    bandwith = models.DecimalField(max_length=5,decimal_places=2,max_digits=5)
     phone = models.CharField(max_length=25)
     email = models.EmailField(max_length=100)
     subscription = models.BooleanField(default=False)
