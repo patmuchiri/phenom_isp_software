@@ -1,11 +1,12 @@
 # views.py
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.models import User
 from django.http import HttpResponse
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 from .tasks import check_subscription_status
-from .forms import CustomerSignupForm, Signin_form, StaffSignupForm
+from .forms import CustomerSignupForm, Signin_form, StaffSignupForm, StaffUpdateForm
 from .models import Customer
 from django.contrib import messages
 
@@ -87,8 +88,28 @@ def staff_signup(request):
             user = form.save()
             permissions = form.cleaned_data['permissions']
             user.user_permissions.set(permissions)
-            return redirect('home')  # Redirect to a success page
+            return redirect('view_staff')  # Redirect to a success page
     else:
         form = StaffSignupForm()
     return render(request, 'signup.html', {'form': form})
 
+def view_staff(request):
+    staff = User.objects.all()
+    return render(request,'staff.html', {'staff': staff})
+
+
+def edit_staff_page(request, id):
+    staff = User.objects.get(pk=id)
+    staff_permissions = staff.get_all_permissions()
+    return render(request, 'view_staff.html', {'staff': staff, 'permissions': staff_permissions})
+
+
+def update_staff(request, id):
+    staff = get_object_or_404(User, pk=id)
+    form = StaffUpdateForm(instance=staff)
+    if request.method == 'POST':
+        form = StaffUpdateForm(request.POST, instance=staff)
+        if form.is_valid():
+            form.save()
+            return redirect('view_staff')  # Assuming 'view_staff' is the URL name for viewing staff
+    return render(request, 'signup.html', {'form': form})

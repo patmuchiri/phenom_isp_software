@@ -17,12 +17,16 @@
         <li class="nav-item">
           <a class="nav-link active" aria-current="page" href="{% url 'home' %}">Customers</a>
         </li>
+          <li class="nav-item">
+          <a class="nav-link active" href="{% url 'view_staff' %}">Staff</a>
+        </li>
         <li class="nav-item">
           <a class="nav-link" href="{% url 'signup' %}">Add Customer</a>
         </li>
            <li class="nav-item">
           <a class="nav-link" href="{% url 'staff_signup' %}">Add Staff</a>
         </li>
+            
           <li class="nav-item">
           <a class="nav-link" href="{% url 'logout' %}">Logout</a>
         </li>

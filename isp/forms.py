@@ -35,6 +35,31 @@ class StaffSignupForm(UserCreationForm):
         model = User
         fields = ('username','first_name', 'email', 'password1', 'password2','is_superuser','is_staff','permissions')
 
+
     def __init__(self, *args, **kwargs):
         super(StaffSignupForm, self).__init__(*args, **kwargs)
         self.fields['permissions'].queryset = Permission.objects.all()
+
+
+
+class StaffUpdateForm(forms.ModelForm):
+    permissions = forms.ModelMultipleChoiceField(
+        queryset=Permission.objects.all(),
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+        label='Permissions'
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            'username', 'first_name', 'last_name', 'email', 'is_superuser', 'is_staff', 'permissions'
+        )
+
+    def __init__(self, *args, **kwargs):
+        super(StaffUpdateForm, self).__init__(*args, **kwargs)
+        # Get the instance (user being updated)
+        instance = kwargs.get('instance')
+        if instance:
+            # If instance exists, set initial permissions
+            self.fields['permissions'].initial = instance.user_permissions.all()
