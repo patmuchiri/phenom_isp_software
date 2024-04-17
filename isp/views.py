@@ -91,3 +91,4 @@ def staff_signup(request):
     else:
         form = StaffSignupForm()
     return render(request, 'signup.html', {'form': form})
+
