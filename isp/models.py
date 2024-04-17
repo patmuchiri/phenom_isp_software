@@ -4,7 +4,7 @@ from django.db import models
 # Create your models here.
 class Customer(models.Model):
     name = models.CharField(max_length=100)
-    router_ip_address = models.GenericIPAddressField()
+    router_ip_address = models.CharField(max_length=100, default='127.0.0.1')
     bandwith = models.DecimalField(max_length=5,decimal_places=2,max_digits=5)
     phone = models.CharField(max_length=25)
     email = models.EmailField(max_length=100)
