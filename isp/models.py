@@ -3,10 +3,11 @@ from django.db import models
 
 # Create your models here.
 class Customer(models.Model):
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=100,unique=True)
     router_ip_address = models.CharField(max_length=100, default='127.0.0.1')
-    bandwith = models.DecimalField(max_length=5,decimal_places=2,max_digits=5)
+    bandwith = models.CharField(max_length=7)
     phone = models.CharField(max_length=25)
+    subscription_amount = models.IntegerField(default=1)
     email = models.EmailField(max_length=100)
     subscription = models.BooleanField(default=False)
     last_updated = models.DateTimeField(auto_now_add=True)
