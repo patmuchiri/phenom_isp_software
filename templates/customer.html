@@ -28,10 +28,11 @@
       <div class="col col-lg-6 mb-4 mb-lg-0">
         <div class="card mb-3" style="border-radius: .5rem;">
           <div class="row g-0">
+          {% for i in customer %}
             <div class="col-md-4 text-center text-black" style="padding-top: 40px">
          
             
-              <h5>{{ customer.name }}</h5>
+              <h5>{{ i.name }}</h5>
             
               <i class="far fa-edit mb-5"></i>
             </div>
@@ -41,39 +42,43 @@
                 <hr class="mt-0 mb-4">
                 <div class="row pt-1">
                   <div class="col-6 mb-3">
+                      {% for j in details %}
                     <h6>Email</h6>
-                    <p class="text-muted">{{ customer.email }}</p>
+                    <p class="text-muted">{{ j.email }}</p>
                   </div>
                   <div class="col-6 mb-3">
                     <h6>Phone</h6>
-                    <p class="text-muted">{{ customer.phone }}</p>
+                    <p class="text-muted">{{ j.phone }}</p>
                   </div>
+                         
                 </div>
                 <h6>Subscription</h6>
                 <hr class="mt-0 mb-4">
                 <div class="row pt-1">
                   <div class="col-6 mb-3">
                     <h6>Status</h6>
-                    <p class="text-muted">{% if customer.subscription %}Active{% else %}Inactive{% endif %}</p>
+                    <p class="text-muted">{% if j.status %}Active{% else %}Inactive{% endif %}</p>
                   </div>
                   <div class="col-6 mb-3">
                     <h6>Last Payment</h6>
-                    <p class="text-muted">{{ customer.last_payment | timesince }}</p>
+                    <p class="text-muted">{{ j.last_payment | timesince }}</p>
                   </div>
                 </div>
+                         
                    <div class="col-6 mb-3">
                     <h6>Router ip</h6>
-                    <p class="text-muted">{{ customer.router_ip_address}}</p>
+                    <p class="text-muted">{{ i.target}}</p>
                   </div>
               <div class="col-6 mb-3">
-                    <h6>MB/S</h6>
-                    <p class="text-muted">{{ customer.bandwith}}</p>
+                    <h6>Upload/Download</h6>
+                    <p class="text-muted">{{ i.bytes}}</p>
                   </div>
-                 
+                
                 <div class="d-flex justify-content-start">
-                  <a href="{% url 'update_customer' customer.id %}"  class="btn btn-primary" >Update</a>
-                     <a href="{% url 'delete_customer' customer.id %}" class="btn btn-danger"  style="margin-left: 10px" >Delete</a>
-               
+                  <a href="{% url 'update_customer' j.id  %}"  class="btn btn-primary" >Update</a>
+                     <a href="{% url 'delete_customer' j.id %}" class="btn btn-danger"  style="margin-left: 10px" >Delete</a>
+               {% endfor %}
+                  {% endfor %}
                 </div>
               </div>
             </div>

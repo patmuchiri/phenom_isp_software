@@ -9,10 +9,15 @@ https://docs.djangoproject.com/en/5.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
-
+import os
 from pathlib import Path
 from django.contrib import messages
 from celery.schedules import crontab
+from dotenv import load_dotenv
+
+# Load .env file
+env_path = Path('.') / '.env'
+load_dotenv(dotenv_path=env_path)
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -130,13 +135,6 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CELERY_TIMEZONE = "Africa/Nairobi"
-CELERY_TASK_TRACK_STARTED = True
-
-
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_TIME_LIMIT = 30 * 60
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
 CELERY_RESULT_BACKEND = 'django-db'
 CELERY_CACHE_BACKEND = 'django-cache'
 CELERY_BEAT_SCHEDULE = {
@@ -147,6 +145,10 @@ CELERY_BEAT_SCHEDULE = {
     'activate-user': {
         'task': 'isp.tasks.activate_subscription',
         'schedule': 30,
+    },
+    'remind-subscription': {
+        'task': 'isp.tasks.remind_subscription',
+        'schedule': crontab(minute = 12 , hour = 12)
     },
 }
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
@@ -159,4 +161,14 @@ MESSAGE_TAGS = {
     messages.SUCCESS: 'alert alert-success alert-dismissible fade show',
     messages.WARNING: 'alert-warning',
     messages.ERROR: 'alert alert-danger alert-dismissible fade show',
+}
+
+MPESA_API = {
+    "BIZ_SHORT_CODE": os.getenv('BIZ_SHORT_CODE'),
+    "CALLBACK_URL": os.getenv('CALLBACK_URL'),
+    "CONSUMER_KEY": os.getenv('CONSUMER_KEY'),
+    "CONSUMER_SECRET": os.getenv('CONSUMER_SECRET'),
+    "CREDENTIALS_URL": os.getenv('CREDENTIALS_URL'),
+    "PAYMENT_URL":os.getenv('PAYMENT_URL'),
+    "PASS_KEY": os.getenv('PASS_KEY'),
 }
