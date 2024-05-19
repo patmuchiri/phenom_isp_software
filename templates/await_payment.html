@@ -4,18 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <title>Awaiting Payment</title>
-    <!-- Bootstrap CSS -->
-    <link href="https://stackpath.bootstrapcdn.com/bootstrap/5.1.0/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-    <!-- Custom CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
     <style>
-        body, html {
+        html, body {
             height: 100%;
             margin: 0;
             font-family: 'Roboto', sans-serif;
-            background: linear-gradient(to right, rgba(0, 123, 255, 0.7), rgba(0, 123, 255, 0.7)), 
-                        url('https://source.unsplash.com/1600x900/?payment') no-repeat center center fixed;
+            background: linear-gradient(to right, rgba(0, 123, 255, 0.7), rgba(0, 123, 255, 0.7)), url('https://source.unsplash.com/1600x900/?payment') no-repeat center center fixed;
             background-size: cover;
             color: white;
         }
@@ -27,11 +22,10 @@
             height: 100vh;
             text-shadow: 1px 1px 5px rgba(0, 0, 0, 0.5);
         }
-        .spinner-border {
-            width: 5rem;
-            height: 5rem;
+        .loader {
+            animation: fadeIn 2s;
         }
-        .lead, h1, .btn {
+        .title, .subtitle, .button {
             animation: fadeIn 2s;
         }
         @keyframes fadeIn {
@@ -42,33 +36,20 @@
 </head>
 <body>
 
-<div class="container text-center">
-    <div class="row">
-        <div class="col-12">
-            <h1 class="mb-4">Awaiting Your Payment</h1>
-            <div class="spinner-border text-light mb-4" role="status">
-                <span class="visually-hidden">Loading...</span>
-            </div>
-            <p class="lead">Please  complete your payment to stay connected.</p>
-            <p>If you have any questions, please <a href="#" class="text-light text-decoration-underline">contact us</a>.</p>
-             <p>Merchant Request ID: {{ mid }}</p>
-    <p>Checkout Request ID: {{ cid }}</p>
-    <p>Result Code: {{ code }}</p>
-    <p>Customer ID: {{ customer.id }}</p>
-    <p>Customer Name: {{ customer.name }}</p>
-    <p>Customer Phone: {{ customer.phone }}</p>
-            {% if code != 0 %}
-            <a href="{% url 'initiate_payment' customer.id%}" class="btn btn-outline-light mt-3">Retry</a>
-               
-               
-            {% endif %}
+<div class="container">
+    <div class="content has-text-centered">
+        <h1 class="title is-1">Awaiting Your Payment</h1>
+        <div class="loader">
+            <span class="loader is-loading"></span>
         </div>
+        <p class="subtitle is-4">Please complete your payment to stay connected.</p>
+        <p>If you have any questions, please <a href="#" class="has-text-light has-text-underlined">contact us</a>.</p>
+        <p>Customer Name: {{ customer.name }}</p>
+        <p>Customer Phone: {{ customer.phone }}</p>
+             <p class="subtitle is-4">Once Complete Click the verify button to check your transaction</p>
+        <a href="#" id="verifyButton" class="button is-outlined is-light mt-4">verify</a>
     </div>
 </div>
 
-<!-- Bootstrap JS and dependencies -->
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.3/dist/umd/popper.min.js"></script>
-<script src="https://stackpath.bootstrapcdn.com/bootstrap/5.1.0/js/bootstrap.min.js"></script>
 </body>
 </html>

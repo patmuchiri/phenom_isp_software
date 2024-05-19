@@ -206,7 +206,7 @@ def initiate_payment(request,id):
                 mid = json_resp["MerchantRequestID"]
                 cid = json_resp["CheckoutRequestID"]
                 print(json_resp)
-                return redirect('callback',args=[id])
+                return render(request,'await_payment.html',{'customer':customer})
             else:
                 print("failed")
         elif "errorCode" in json_resp:
