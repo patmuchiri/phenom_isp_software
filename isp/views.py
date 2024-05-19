@@ -218,6 +218,7 @@ def initiate_payment(request,id):
 @csrf_exempt
 def callback(request,id):
     customer = Customer.objects.get(pk=id)
+    #
     result = json.loads(request.body)
     mid = result["Body"]["stkCallback"]["MerchantRequestID"]
     cid = result["Body"]["stkCallback"]["CheckoutRequestID"]
