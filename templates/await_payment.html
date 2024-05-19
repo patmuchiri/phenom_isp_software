@@ -50,8 +50,18 @@
                 <span class="visually-hidden">Loading...</span>
             </div>
             <p class="lead">Please  complete your payment to stay connected.</p>
-            <p>If you have any questions, please <a href="/contact" class="text-light text-decoration-underline">contact us</a>.</p>
-            <a href="/" class="btn btn-outline-light mt-3">Return to Home</a>
+            <p>If you have any questions, please <a href="#" class="text-light text-decoration-underline">contact us</a>.</p>
+             <p>Merchant Request ID: {{ mid }}</p>
+    <p>Checkout Request ID: {{ cid }}</p>
+    <p>Result Code: {{ code }}</p>
+    <p>Customer ID: {{ customer.id }}</p>
+    <p>Customer Name: {{ customer.name }}</p>
+    <p>Customer Phone: {{ customer.phone }}</p>
+            {% if code != 0 %}
+            <a href="{% url 'initiate_payment' customer.id%}" class="btn btn-outline-light mt-3">Retry</a>
+               
+               
+            {% endif %}
         </div>
     </div>
 </div>

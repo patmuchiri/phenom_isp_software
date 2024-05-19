@@ -206,7 +206,7 @@ def initiate_payment(request,id):
                 mid = json_resp["MerchantRequestID"]
                 cid = json_resp["CheckoutRequestID"]
                 print(json_resp)
-                return render(request,'await_payment.html')
+                return redirect('callback',args=[id])
             else:
                 print("failed")
         elif "errorCode" in json_resp:
@@ -216,9 +216,12 @@ def initiate_payment(request,id):
 
 
 @csrf_exempt
-def callback(request):
+def callback(request,id):
+    customer = Customer.objects.get(pk=id)
     result = json.loads(request.body)
     mid = result["Body"]["stkCallback"]["MerchantRequestID"]
     cid = result["Body"]["stkCallback"]["CheckoutRequestID"]
     code = result["Body"]["stkCallback"]["ResultCode"]
-    return render(request,'await_payment.html')
+    if code == "0":
+        return render(request,'success.html')
+    return render(request,'await_payment.html',{"customer": customer, "mid": mid, "cid": cid, "code": code})
