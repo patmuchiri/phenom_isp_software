@@ -34,7 +34,7 @@ def activate_subscription():
         if days_since_last_payment < 31:
 
             customer.subscription = True
-            list_queues.set(name=customer.name,max_limit=customer.bandwith)
+            list_queues.set(name=customer.name,max_limit=customer.bandwith.upper())
             customer.save()
 
 
