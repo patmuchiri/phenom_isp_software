@@ -1,0 +1,1 @@
+from djangoProject27.wsgi import application
