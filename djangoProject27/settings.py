@@ -154,7 +154,7 @@ CELERY_BEAT_SCHEDULE = {
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
 CRISPY_TEMPLATE_PACK = "bootstrap5"
 
-
+CELERY_BROKER_URL = os.getenv('BROKER_URL')
 MESSAGE_TAGS = {
     messages.DEBUG: 'alert-info',
     messages.INFO: 'alert-info',
