@@ -1,15 +1,18 @@
-# views.py
 import json
 import os
+import logging
 
 import requests
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import HttpResponse, HttpResponseRedirect, HttpResponseServerError
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from rest_framework import status
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
 
 from . import mpesa
 from .tasks import check_subscription_status
@@ -21,6 +24,8 @@ import clicksend_client
 from clicksend_client import SmsMessage
 from clicksend_client.rest import ApiException
 
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Configure HTTP basic authorization: BasicAuth Clicksend
 configuration = clicksend_client.Configuration()
@@ -28,10 +33,16 @@ configuration.username = os.getenv('CLICKSEND_USERNAME')
 configuration.password = os.getenv('CLICKSEND_PASSWORD')
 api_instance = clicksend_client.SMSApi(clicksend_client.ApiClient(configuration))
 
-#Routeros config
-connection = routeros_api.RouterOsApiPool(os.getenv('ROUTER_IP'), os.getenv('ROUTER_USERNAME'), os.getenv('ROUTER_PASSWORD'), plaintext_login=True)
-api = connection.get_api()
-list_queues = api.get_resource('/queue/simple')
+# RouterOS config
+router_ip = os.getenv('ROUTER_IP')
+router_username = os.getenv('ROUTER_USERNAME')
+router_password = os.getenv('ROUTER_PASSWORD')
+
+
+def get_routeros_api():
+    connection = routeros_api.RouterOsApiPool(router_ip, router_username, router_password, plaintext_login=True)
+    api = connection.get_api()
+    return api, connection
 
 
 def signup(request):
@@ -42,9 +53,17 @@ def signup(request):
             name = user.name
             target = user.router_ip_address
             bandwith = user.bandwith.upper()
-            list_queues.add(name=name, target=target, max_limit=bandwith)
-            user.save()
-            messages.success(request, f"{user.name} successfully registered")
+            api, connection = get_routeros_api()
+            try:
+                list_queues = api.get_resource('/queue/simple')
+                list_queues.add(name=name, target=target, max_limit=bandwith)
+                user.save()
+                messages.success(request, f"{user.name} successfully registered")
+            except Exception as e:
+                logger.error(f"Error while adding user to RouterOS queue: {e}")
+                messages.error(request, "Error registering user. Please try again.")
+            finally:
+                connection.disconnect()
             return redirect('home')
     else:
         form = CustomerSignupForm()
@@ -64,43 +83,68 @@ def signin(request):
                 return redirect('home')
             else:
                 messages.error(request, 'Username or password incorrect')
-                return render(request,'login.html', {'form': form})
     return render(request, 'login.html', {'form': Signin_form()})
 
 
 def home(request):
-    customers = list_queues.get()
+    try:
+        api, connection = get_routeros_api()
+        list_queues = api.get_resource('/queue/simple')
+        customers = list_queues.get()
+    except Exception as e:
+        logger.error(f"Error fetching customers from RouterOS: {e}")
+        return HttpResponseServerError("Internal Server Error")
+    finally:
+        connection.disconnect()
+
     return render(request, 'home.html', {'customers': customers})
 
 
 def view_customer(request, id):
-    customer = list_queues.get(id=id)
-    user_names = [i['name'] for i in customer]
-    users = Customer.objects.filter(name__in=user_names)
-    details = [{'id':user.id,'name': user.name, 'email': user.email, 'phone': user.phone, 'status': user.subscription, 'last_payment': user.last_payment} for user in users]
+    try:
+        api, connection = get_routeros_api()
+        list_queues = api.get_resource('/queue/simple')
+        customer = list_queues.get(id=id)
+        user_names = [i['name'] for i in customer]
+        users = Customer.objects.filter(name__in=user_names)
+        details = [
+            {'id': user.id, 'name': user.name, 'email': user.email, 'phone': user.phone, 'status': user.subscription,
+             'last_payment': user.last_payment} for user in users]
+    except Exception as e:
+        logger.error(f"Error fetching customer details: {e}")
+        return HttpResponseServerError("Internal Server Error")
+    finally:
+        connection.disconnect()
+
     return render(request, 'customer.html', {'customer': customer, 'details': details})
 
 
-
-
 def update_customer(request, id):
-    customer = Customer.objects.get(pk=id)
-    user = list_queues.get(name=customer.name)
-    user_id = [i['id'] for i in user]
-    if request.method == 'POST':
-        form = CustomerSignupForm(request.POST, instance=customer)
-        if form.is_valid():
-            name = form.cleaned_data['name']
-            target = form.cleaned_data['router_ip_address']
-            bandwith = form.cleaned_data['bandwith'].upper()
-            list_queues.set(id=user_id[0],name=name,target=target,max_limit=bandwith)
-            form.save()
-            messages.success(request, f"{name} successfully updated")
-            return HttpResponseRedirect(reverse('view_customer', args=[user_id[0]]))
-    else:
-        form = CustomerSignupForm(instance=customer)
-    return render(request, 'signup.html', {'form': form})
+    try:
+        customer = Customer.objects.get(pk=id)
+        api, connection = get_routeros_api()
+        list_queues = api.get_resource('/queue/simple')
+        user = list_queues.get(name=customer.name)
+        user_id = [i['id'] for i in user]
+        if request.method == 'POST':
+            form = CustomerSignupForm(request.POST, instance=customer)
+            if form.is_valid():
+                name = form.cleaned_data['name']
+                target = form.cleaned_data['router_ip_address']
+                bandwith = form.cleaned_data['bandwith'].upper()
+                list_queues.set(id=user_id[0], name=name, target=target, max_limit=bandwith)
+                form.save()
+                messages.success(request, f"{name} successfully updated")
+                return HttpResponseRedirect(reverse('view_customer', args=[user_id[0]]))
+        else:
+            form = CustomerSignupForm(instance=customer)
+    except Exception as e:
+        logger.error(f"Error updating customer: {e}")
+        return HttpResponseServerError("Internal Server Error")
+    finally:
+        connection.disconnect()
 
+    return render(request, 'signup.html', {'form': form})
 
 
 def signout(request):
@@ -108,15 +152,23 @@ def signout(request):
     return redirect("signin")
 
 
-def delete_customer(request,id):
-    customer = Customer.objects.get(pk=id)
-    user = list_queues.get(name=customer.name)
-    user_id = [i['id'] for i in user]
-    list_queues.remove(id=user_id[0])
-    customer.delete()
-    messages.error(request, f"Successfully deleted")
-    return redirect('home')
+def delete_customer(request, id):
+    try:
+        customer = Customer.objects.get(pk=id)
+        api, connection = get_routeros_api()
+        list_queues = api.get_resource('/queue/simple')
+        user = list_queues.get(name=customer.name)
+        user_id = [i['id'] for i in user]
+        list_queues.remove(id=user_id[0])
+        customer.delete()
+        messages.success(request, "Successfully deleted")
+    except Exception as e:
+        logger.error(f"Error deleting customer: {e}")
+        return HttpResponseServerError("Internal Server Error")
+    finally:
+        connection.disconnect()
 
+    return redirect('home')
 
 
 def staff_signup(request):
@@ -126,14 +178,15 @@ def staff_signup(request):
             user = form.save()
             permissions = form.cleaned_data['permissions']
             user.user_permissions.set(permissions)
-            return redirect('view_staff')  # Redirect to a success page
+            return redirect('view_staff')
     else:
         form = StaffSignupForm()
     return render(request, 'signup.html', {'form': form})
 
+
 def view_staff(request):
     staff = User.objects.all()
-    return render(request,'staff.html', {'staff': staff})
+    return render(request, 'staff.html', {'staff': staff})
 
 
 def edit_staff_page(request, id):
@@ -144,42 +197,37 @@ def edit_staff_page(request, id):
 
 def update_staff(request, id):
     staff = get_object_or_404(User, pk=id)
-    form = StaffUpdateForm(instance=staff)
     if request.method == 'POST':
         form = StaffUpdateForm(request.POST, instance=staff)
         if form.is_valid():
             form.save()
             return redirect('view_staff')
+    else:
+        form = StaffUpdateForm(instance=staff)
     return render(request, 'signup.html', {'form': form})
 
 
-# views.py
-
 def send_sms_view(request):
-    sms_message = SmsMessage(source="php",
-                            body="This is a test message.",
-                            to="+254712240197",
-                            schedule=1436874701)
-
+    sms_message = SmsMessage(
+        source="php",
+        body="This is a test message.",
+        to="+254712240197",
+        schedule=1436874701
+    )
     sms_messages = clicksend_client.SmsMessageCollection(messages=[sms_message])
-
     try:
-        # Send sms message(s)
         api_response = api_instance.sms_send_post(sms_messages)
-        print(api_response)
+        logger.info(f"SMS sent successfully: {api_response}")
     except ApiException as e:
-        print("Exception when calling SMSApi->sms_send_post: %s\n" % e)
-    return HttpResponse("message sent")
+        logger.error(f"Exception when calling SMSApi->sms_send_post: {e}")
+    return HttpResponse("Message sent")
 
 
 @csrf_exempt
-def initiate_payment(request,id):
-
+def initiate_payment(request, id):
     customer = Customer.objects.get(pk=id)
     if request.method == "POST":
-        phone = request.POST["phone"]
-        phone = phone.split('0',1)
-        phone = phone[1]
+        phone = request.POST["phone"].split('0', 1)[1]
         amount = request.POST["amount"]
         data = {
             "BusinessShortCode": mpesa.get_business_shortcode(),
@@ -196,32 +244,83 @@ def initiate_payment(request,id):
         }
         headers = mpesa.generate_request_headers()
 
-        resp = requests.post(mpesa.get_payment_url(), json=data, headers=headers)
-        print(resp.json())
-        json_resp = resp.json()
-        if "ResponseCode" in json_resp:
-            code = json_resp["ResponseCode"]
-            messages.success(request,"M-Pesa prompt sent successfully")
-            if code == "0":
-                mid = json_resp["MerchantRequestID"]
-                cid = json_resp["CheckoutRequestID"]
-                print(json_resp)
-                return render(request,'await_payment.html',{'customer':customer})
+        try:
+            resp = requests.post(mpesa.get_payment_url(), json=data, headers=headers)
+            json_resp = resp.json()
+            if "ResponseCode" in json_resp and json_resp["ResponseCode"] == "0":
+                messages.success(request, "M-Pesa prompt sent successfully")
+                return render(request, 'await_payment.html', {'customer': customer})
             else:
-                print("failed")
-        elif "errorCode" in json_resp:
-            errorCode = json_resp["errorCode"]
+                messages.error(request, "Failed to send M-Pesa prompt")
+        except Exception as e:
+            logger.error(f"Error initiating M-Pesa payment: {e}")
+            messages.error(request, "Error initiating payment. Please try again.")
 
-    return render(request, "payment.html",{"customer": customer})
+    return render(request, "payment.html", {"customer": customer})
 
 
 @csrf_exempt
-def callback(request,id):
+def callback(request, id):
     customer = Customer.objects.get(pk=id)
-    result = json.loads(request.body)
-    mid = result["Body"]["stkCallback"]["MerchantRequestID"]
-    cid = result["Body"]["stkCallback"]["CheckoutRequestID"]
-    code = result["Body"]["stkCallback"]["ResultCode"]
-    if code == "0":
-        return render(request,'success.html')
-    return render(request,'await_payment.html',{"customer": customer, "mid": mid, "cid": cid, "code": code})
+    try:
+        result = json.loads(request.body)
+        code = result["Body"]["stkCallback"]["ResultCode"]
+        if code == "0":
+            return render(request, 'success.html')
+    except Exception as e:
+        logger.error(f"Error handling M-Pesa callback: {e}")
+
+    return render(request, 'await_payment.html', {"customer": customer})
+
+
+@api_view(['GET'])
+def disable_customer(request):
+    try:
+        customers = Customer.objects.all()
+        disabled_customers = []
+        for customer in customers:
+            days_since_last_payment = (timezone.now() - customer.last_payment).days
+            if days_since_last_payment > 31:
+                customer.subscription = False
+                api, connection = get_routeros_api()
+                list_queues = api.get_resource('/queue/simple')
+                list_queues.set(name=customer.name, max_limit="1k/1k")
+                customer.save()
+                disabled_customers.append(customer.name)
+                connection.disconnect()
+        if disabled_customers:
+            return Response({"message": f"The following customers have been disabled: {', '.join(disabled_customers)}"},
+                            status=status.HTTP_200_OK)
+        else:
+            return Response({"message": "No customers have been disabled"}, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error disabling customers: {e}")
+        return Response({"message": "An error occurred while processing the request"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def enable_customer(request):
+    try:
+        customers = Customer.objects.filter(subscription=False)
+        disabled_customers = []
+        for customer in customers:
+            days_since_last_payment = (timezone.now() - customer.last_payment).days
+            if days_since_last_payment < 31:
+                customer.subscription = True
+                api, connection = get_routeros_api()
+                list_queues = api.get_resource('/queue/simple')
+                list_queues.set(name=customer.name, max_limit=customer.bandwith)
+                customer.save()
+                disabled_customers.append(customer.name)
+                connection.disconnect()
+        if disabled_customers:
+            return Response({"message": f"The following customers have been enabled: {', '.join(disabled_customers)}"},
+                            status=status.HTTP_200_OK)
+        else:
+            return Response({"message": "No customers have been enabled"}, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error enabling customers: {e}")
+        return Response({"message": "An error occurred while processing the request"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
