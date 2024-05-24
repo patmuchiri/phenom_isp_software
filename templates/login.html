@@ -4,9 +4,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Login</title>
+    <title>PHENOM</title>
+          <link rel="icon" href="https://cdn.pixabay.com/photo/2016/12/27/13/10/logo-1933884_640.png">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
     <style>
+        .asteriskField{
+            display: none;
+        }
+        
       body {
         background-color: #f5f5f5;
       }
@@ -19,7 +24,7 @@
           <div class="column is-half">
             <div class="box">
                 {% include 'alerts.html' %}
-              <h1 class="title has-text-centered">Login</h1>
+              <h1 class="title has-text-centered">PHENOM ISP SYSTEM</h1>
               <form method="post">
                 {% csrf_token %}
                 {{ form|crispy }}
@@ -29,7 +34,7 @@
                   </div>
                 </div>
                 <div class="has-text-centered">
-                  <a href="{% url 'password_reset' %}">Forgot Password?</a>
+                  <a href="{% url 'password_reset' %}" style="text-decoration: none">Forgot Password?</a>
                 </div>
               </form>
             </div>

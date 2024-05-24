@@ -4,6 +4,7 @@ import logging
 
 import requests
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.http import HttpResponse, HttpResponseRedirect, HttpResponseServerError
 from django.shortcuts import render, redirect, get_object_or_404
@@ -44,7 +45,7 @@ def get_routeros_api():
     api = connection.get_api()
     return api, connection
 
-
+@login_required
 def signup(request):
     if request.method == 'POST':
         form = CustomerSignupForm(request.POST)
@@ -86,7 +87,7 @@ def signin(request):
                 messages.error(request, 'Username or password incorrect')
     return render(request, 'login.html', {'form': Signin_form()})
 
-
+@login_required
 def home(request):
     try:
         api, connection = get_routeros_api()
@@ -97,7 +98,7 @@ def home(request):
         return HttpResponseServerError(e)
     return render(request, 'home.html', {'customers': customers})
 
-
+@login_required
 def view_customer(request, id):
     try:
         api, connection = get_routeros_api()
@@ -113,7 +114,7 @@ def view_customer(request, id):
         return HttpResponseServerError(e)
     return render(request, 'customer.html', {'customer': customer, 'details': details})
 
-
+@login_required
 def update_customer(request, id):
     try:
         customer = Customer.objects.get(pk=id)
@@ -140,12 +141,12 @@ def update_customer(request, id):
 
     return render(request, 'signup.html', {'form': form})
 
-
+@login_required
 def signout(request):
     logout(request)
     return redirect("signin")
 
-
+@login_required
 def delete_customer(request, id):
     try:
         customer = Customer.objects.get(pk=id)
@@ -162,7 +163,7 @@ def delete_customer(request, id):
 
     return redirect('home')
 
-
+@login_required
 def staff_signup(request):
     if request.method == 'POST':
         form = StaffSignupForm(request.POST)
@@ -175,18 +176,18 @@ def staff_signup(request):
         form = StaffSignupForm()
     return render(request, 'signup.html', {'form': form})
 
-
+@login_required
 def view_staff(request):
     staff = User.objects.all()
     return render(request, 'staff.html', {'staff': staff})
 
-
+@login_required
 def edit_staff_page(request, id):
     staff = User.objects.get(pk=id)
     staff_permissions = staff.get_all_permissions()
     return render(request, 'view_staff.html', {'staff': staff, 'permissions': staff_permissions})
 
-
+@login_required
 def update_staff(request, id):
     staff = get_object_or_404(User, pk=id)
     if request.method == 'POST':
@@ -198,7 +199,7 @@ def update_staff(request, id):
         form = StaffUpdateForm(instance=staff)
     return render(request, 'signup.html', {'form': form})
 
-
+@login_required
 def send_sms_view(request):
     sms_message = SmsMessage(
         source="php",
@@ -214,7 +215,7 @@ def send_sms_view(request):
         logger.error(f"Exception when calling SMSApi->sms_send_post: {e}")
     return HttpResponse("Message sent")
 
-
+@login_required
 @csrf_exempt
 def initiate_payment(request, id):
     customer = Customer.objects.get(pk=id)
@@ -250,7 +251,7 @@ def initiate_payment(request, id):
 
     return render(request, "payment.html", {"customer": customer})
 
-
+@login_required
 @csrf_exempt
 def callback(request, id):
     customer = Customer.objects.get(pk=id)
