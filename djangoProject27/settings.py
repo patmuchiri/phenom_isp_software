@@ -204,3 +204,4 @@ EMAIL_PORT = 465
 EMAIL_USE_SSL = True
 EMAIL_HOST_USER = 'johngachara29@gmail.com'  # Your Gmail email address
 EMAIL_HOST_PASSWORD = 'lgwtyehxbdelvmss'
+STATIC_ROOT = os.path.join(BASE_DIR, 'static')
