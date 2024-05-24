@@ -319,3 +319,6 @@ def enable_customer(request):
         return Response({"message": e},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+def custom_404(request, exception):
+    return render(request, '404.html', status=404)

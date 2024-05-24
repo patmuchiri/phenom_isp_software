@@ -1,6 +1,7 @@
 # urls.py
+from django.conf.urls import handler404
 from django.urls import path
-from .views import signup,signin,home,view_customer,update_customer,signout,delete_customer,staff_signup,view_staff,edit_staff_page,update_staff,initiate_payment,callback,disable_customer,enable_customer
+from .views import signup,signin,home,view_customer,update_customer,signout,delete_customer,staff_signup,view_staff,edit_staff_page,update_staff,initiate_payment,callback,disable_customer,enable_customer,custom_404
 from django.contrib.auth import views as auth_views
 urlpatterns = [
     path('signup', signup, name='signup'),
@@ -23,3 +24,4 @@ urlpatterns = [
     path('reset/<uidb64>/<token>/', auth_views.PasswordResetConfirmView.as_view(template_name='password_reset_confirm.html'), name='password_reset_confirm'),
     path('reset/done/', auth_views.PasswordResetCompleteView.as_view(template_name='password_reset_complete.html'), name='password_reset_complete'),
 ]
+handler404 = custom_404
