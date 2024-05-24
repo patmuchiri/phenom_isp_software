@@ -200,7 +200,7 @@ MPESA_API = {
 }
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
+EMAIL_PORT = 465
 EMAIL_USE_SSL = True
 EMAIL_HOST_USER = 'johngachara29@gmail.com'  # Your Gmail email address
 EMAIL_HOST_PASSWORD = 'lgwtyehxbdelvmss'
