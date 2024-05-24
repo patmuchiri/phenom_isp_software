@@ -52,11 +52,12 @@ def signup(request):
             user = form.save(commit=False)
             name = user.name
             target = user.router_ip_address
-            bandwith = user.bandwith.upper()
+            bandwith = user.bandwith
+            bandwith_format = f"{bandwith}M/{bandwith}M"
             api, connection = get_routeros_api()
             try:
                 list_queues = api.get_resource('/queue/simple')
-                list_queues.add(name=name, target=target, max_limit=bandwith)
+                list_queues.add(name=name, target=target, max_limit=bandwith_format)
                 user.save()
                 messages.success(request, f"{user.name} successfully registered")
             except Exception as e:
@@ -93,10 +94,7 @@ def home(request):
         customers = list_queues.get()
     except Exception as e:
         logger.error(f"Error fetching customers from RouterOS: {e}")
-        return HttpResponseServerError("Internal Server Error")
-    finally:
-        connection.disconnect()
-
+        return HttpResponseServerError(e)
     return render(request, 'home.html', {'customers': customers})
 
 
@@ -112,10 +110,7 @@ def view_customer(request, id):
              'last_payment': user.last_payment} for user in users]
     except Exception as e:
         logger.error(f"Error fetching customer details: {e}")
-        return HttpResponseServerError("Internal Server Error")
-    finally:
-        connection.disconnect()
-
+        return HttpResponseServerError(e)
     return render(request, 'customer.html', {'customer': customer, 'details': details})
 
 
@@ -131,8 +126,9 @@ def update_customer(request, id):
             if form.is_valid():
                 name = form.cleaned_data['name']
                 target = form.cleaned_data['router_ip_address']
-                bandwith = form.cleaned_data['bandwith'].upper()
-                list_queues.set(id=user_id[0], name=name, target=target, max_limit=bandwith)
+                bandwith = form.cleaned_data['bandwith']
+                bandwith_format = f"{bandwith}M/{bandwith}M"
+                list_queues.set(id=user_id[0], name=name, target=target, max_limit=bandwith_format)
                 form.save()
                 messages.success(request, f"{name} successfully updated")
                 return HttpResponseRedirect(reverse('view_customer', args=[user_id[0]]))
@@ -140,9 +136,7 @@ def update_customer(request, id):
             form = CustomerSignupForm(instance=customer)
     except Exception as e:
         logger.error(f"Error updating customer: {e}")
-        return HttpResponseServerError("Internal Server Error")
-    finally:
-        connection.disconnect()
+        return HttpResponseServerError(e)
 
     return render(request, 'signup.html', {'form': form})
 
@@ -164,9 +158,7 @@ def delete_customer(request, id):
         messages.success(request, "Successfully deleted")
     except Exception as e:
         logger.error(f"Error deleting customer: {e}")
-        return HttpResponseServerError("Internal Server Error")
-    finally:
-        connection.disconnect()
+        return HttpResponseServerError(e)
 
     return redirect('home')
 
@@ -310,7 +302,9 @@ def enable_customer(request):
                 customer.subscription = True
                 api, connection = get_routeros_api()
                 list_queues = api.get_resource('/queue/simple')
-                list_queues.set(name=customer.name, max_limit=customer.bandwith)
+                bandwith = customer.bandwith
+                bandwith_format = f"{bandwith}M/{bandwith}M"
+                list_queues.set(name=customer.name, max_limit=bandwith_format)
                 customer.save()
                 disabled_customers.append(customer.name)
                 connection.disconnect()
@@ -321,6 +315,6 @@ def enable_customer(request):
             return Response({"message": "No customers have been enabled"}, status=status.HTTP_200_OK)
     except Exception as e:
         logger.error(f"Error enabling customers: {e}")
-        return Response({"message": "An error occurred while processing the request"},
+        return Response({"message": e},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

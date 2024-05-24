@@ -155,7 +155,7 @@ LOGGING = {
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
 STATIC_URL = 'static/'
-
+LOGIN_URL = ''
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
@@ -198,3 +198,9 @@ MPESA_API = {
     "PAYMENT_URL":os.getenv('PAYMENT_URL'),
     "PASS_KEY": os.getenv('PASS_KEY'),
 }
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_SSL = True
+EMAIL_HOST_USER = 'johngachara29@gmail.com'  # Your Gmail email address
+EMAIL_HOST_PASSWORD = 'lgwtyehxbdelvmss'

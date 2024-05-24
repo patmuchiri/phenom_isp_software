@@ -10,7 +10,8 @@ class CustomerSignupForm(forms.ModelForm):
         fields = "__all__"
         widgets = {
             'last_payment':forms.DateInput(attrs={'type': 'date',"min":"2022-01-01"}),
-            "router_ip_address":forms.TextInput(attrs={'type':'ipv4'})
+            "router_ip_address":forms.TextInput(attrs={'type':'ipv4'}),
+            "bandwith":forms.TextInput(attrs={'type':'number',"min":1,"placeholder":"MBPS"}),
         }
 
 
