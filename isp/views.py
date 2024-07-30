@@ -26,7 +26,10 @@ import routeros_api
 import clicksend_client
 from clicksend_client import SmsMessage
 from clicksend_client.rest import ApiException
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -293,9 +296,16 @@ def get_customer_payments(request, customer_id):
 
 def get_pesapal_token():
     url = "https://pay.pesapal.com/v3/api/Auth/RequestToken"
+    consumer_key = os.getenv('CONSUMER_KEY')
+    consumer_secret = os.getenv('CONSUMER_SECRET')
+    if not consumer_key or not consumer_secret:
+        print("Environment variables not set properly")
+        raise ValueError("Missing CONSUMER_KEY or CONSUMER_SECRET")
+    print("Consumer Key:", consumer_key)
+    print("Consumer Secret:", consumer_secret)
     body = {
-        "consumer_key":os.getenv('consumer_key'),
-        "consumer_secret":os.getenv('consumer_secret'),
+        "consumer_key": f"{consumer_key}",
+        "consumer_secret": f"{consumer_secret}",
     }
     response = requests.post(url, json=body,headers={'Content-Type': 'application/json', 'Accept': 'application/json'}).json()
     print(response)
@@ -341,7 +351,7 @@ def initiate_pesapal_payments(request):
 
         # Create a new Payment object
         payment = Payment.objects.create(
-            customer=customer.name,
+            customer=customer,
             amount=amount,
             pesapal_transaction_tracking_id=pesapal_response['order_tracking_id'],
             pesapal_merchant_reference=merchant_reference,
