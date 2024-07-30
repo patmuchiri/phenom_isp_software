@@ -12,6 +12,7 @@ class Customer(models.Model):
     subscription = models.BooleanField(default=False)
     last_updated = models.DateTimeField(auto_now_add=True)
     last_payment = models.DateTimeField()
+    balance = models.DecimalField(max_digits=7, decimal_places=2, default=0)
 
     def __str__(self):
         return self.name

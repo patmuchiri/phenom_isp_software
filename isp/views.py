@@ -228,14 +228,20 @@ def disable_customer(request):
         disabled_customers = []
         for customer in customers:
             days_since_last_payment = (timezone.now() - customer.last_payment).days
-            if days_since_last_payment > 31:
-                customer.subscription = False
-                api, connection = get_routeros_api()
-                list_queues = api.get_resource('/queue/simple')
-                list_queues.set(name=customer.name, max_limit="1k/1k")
-                customer.save()
-                disabled_customers.append(customer.name)
-                connection.disconnect()
+            if days_since_last_payment >= 30:
+                if customer.balance >= customer.subscription_amount:
+                    customer.balance -= customer.subscription_amount
+                    customer.last_payment = timezone.now()
+                    customer.subscription = True
+                    customer.save()
+                else:
+                    customer.subscription = False
+                    api, connection = get_routeros_api()
+                    list_queues = api.get_resource('/queue/simple')
+                    list_queues.set(name=customer.name, max_limit="1k/1k")
+                    customer.save()
+                    disabled_customers.append(customer.name)
+                    connection.disconnect()
         if disabled_customers:
             return Response({"message": f"The following customers have been disabled: {', '.join(disabled_customers)}"},
                             status=status.HTTP_200_OK)
@@ -290,7 +296,7 @@ def get_customer_payments(request, customer_id):
     payments = Payment.objects.filter(customer=customer)
     if payments:
         serializer = PaymentSerializer(payments, many=True)
-        return Response({"Payments":serializer.data})
+        return Response({"Payments":serializer.data,"Balance": customer.balance})
     return Response("No payments found", status=status.HTTP_404_NOT_FOUND)
 
 
@@ -301,8 +307,8 @@ def get_pesapal_token():
     if not consumer_key or not consumer_secret:
         print("Environment variables not set properly")
         raise ValueError("Missing CONSUMER_KEY or CONSUMER_SECRET")
-    print("Consumer Key:", consumer_key)
-    print("Consumer Secret:", consumer_secret)
+    #print("Consumer Key:", consumer_key)
+    #print("Consumer Secret:", consumer_secret)
     body = {
         "consumer_key": f"{consumer_key}",
         "consumer_secret": f"{consumer_secret}",
@@ -326,8 +332,8 @@ def initiate_pesapal_payments(request):
         "currency": "KES",
         "amount": float(customer.subscription_amount),
         "description": f"Wi-Fi Subscription payment for {customer.name}",
-        "callback_url": "http://localhost:3000/callback",
-        "notification_id": "2296d92a-ea6a-4a3b-990a-dcefbdff86c5",
+        "callback_url": "https://payment-coral-one.vercel.app/callback",
+        "notification_id": "670b6eeb-289d-4a90-9372-dcefa6f71d44",
         "billing_address": {
             "phone_number": customer.phone,
             "first_name": customer.name.split()[0],
@@ -371,7 +377,7 @@ def initiate_pesapal_payments(request):
 def pesapal_callback(request):
     order_tracking_id = request.data.get('OrderTrackingId')
     merchant_reference = request.data.get('MerchantReference')
-
+    print(order_tracking_id)
     payment = get_object_or_404(Payment, pesapal_transaction_tracking_id=order_tracking_id,
                                 pesapal_merchant_reference=merchant_reference)
     token = get_pesapal_token()
@@ -379,23 +385,34 @@ def pesapal_callback(request):
     # Make a request to Pesapal API to get the transaction status
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}"
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json"
     }
     response = requests.get(
-        f"https://pay.pesapal.com/api/Transactions/GetTransactionStatus?orderTrackingId={order_tracking_id}",
+        f"https://pay.pesapal.com/v3/api/Transactions/GetTransactionStatus?orderTrackingId={order_tracking_id}",
         headers=headers
     )
 
     if response.status_code == 200:
         pesapal_response = response.json()
-        payment.status = pesapal_response['payment_status_description']
+        print(pesapal_response)
+        payment.status = pesapal_response['status_code']
 
-        if payment.status == 'COMPLETED':
-            payment.customer.last_payment = timezone.now()
-            payment.customer.subscription = True
-            payment.customer.save()
+        if payment.status == 1:
+            if payment.customer.subscription:
+                payment.customer.balance += int(pesapal_response['amount'])
+                payment.status = 'COMPLETED'
+                payment.customer.save()
+            else:
+                payment.customer.last_payment = timezone.now()
+                payment.customer.subscription = True
+                payment.customer.balance = int(payment.customer.subscription_amount) - int(pesapal_response['amount'])
+                payment.status = 'COMPLETED'
+
+                payment.customer.save()
 
         payment.save()
+        print(payment.customer.balance)
 
         serializer = PaymentSerializer(payment)
         return Response(serializer.data)
