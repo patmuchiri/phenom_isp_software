@@ -396,9 +396,9 @@ def pesapal_callback(request):
     if response.status_code == 200:
         pesapal_response = response.json()
         print(pesapal_response)
-        payment.status = pesapal_response['status_code']
+        payment.status = pesapal_response['payment_status_description']
 
-        if payment.status == 1:
+        if payment.status == 'Completed':
             if payment.customer.subscription:
                 payment.customer.balance += int(pesapal_response['amount'])
                 payment.status = 'COMPLETED'
