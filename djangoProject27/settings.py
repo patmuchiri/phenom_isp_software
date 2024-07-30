@@ -29,7 +29,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-0%7dtqs0j0v-w$p15i1!*#+3ep(%)c1nlw9_0pm--n4yy)2ag%'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = ["isp.phenom-ventures.com", '127.0.0.1', 'localhost']
 
@@ -161,27 +161,9 @@ LOGIN_URL = 'signin'
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-CELERY_TIMEZONE = "Africa/Nairobi"
-CELERY_RESULT_BACKEND = 'django-db'
-CELERY_CACHE_BACKEND = 'django-cache'
-CELERY_BEAT_SCHEDULE = {
-    'check-subscription-every-10-seconds': {
-        'task': 'isp.tasks.check_subscription_status',
-        'schedule': 30,
-    },
-    'activate-user': {
-        'task': 'isp.tasks.activate_subscription',
-        'schedule': 30,
-    },
-    'remind-subscription': {
-        'task': 'isp.tasks.remind_subscription',
-        'schedule': crontab(minute = 12 , hour = 12)
-    },
-}
+
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
 CRISPY_TEMPLATE_PACK = "bootstrap5"
-
-CELERY_BROKER_URL = os.getenv('BROKER_URL')
 MESSAGE_TAGS = {
     messages.DEBUG: 'alert-info',
     messages.INFO: 'alert-info',
