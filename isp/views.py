@@ -326,8 +326,8 @@ def initiate_pesapal_payments(request):
         "currency": "KES",
         "amount": float(customer.subscription_amount),
         "description": f"Wi-Fi Subscription payment for {customer.name}",
-        "callback_url": "https://isp.phenom-ventures.com/callback",
-        "notification_id": "a4dfadb7-46b9-4350-8edd-dceffd1909b7",
+        "callback_url": "http://localhost:3000/callback",
+        "notification_id": "2296d92a-ea6a-4a3b-990a-dcefbdff86c5",
         "billing_address": {
             "phone_number": customer.phone,
             "first_name": customer.name.split()[0],
