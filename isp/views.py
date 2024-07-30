@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+import uuid
 
 import requests
 from django.contrib.auth import authenticate, login, logout
@@ -16,9 +17,10 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from . import mpesa
+from .serializers import CustomerSerializer, PaymentSerializer
 from .tasks import check_subscription_status
 from .forms import CustomerSignupForm, Signin_form, StaffSignupForm, StaffUpdateForm
-from .models import Customer
+from .models import Customer, Payment
 from django.contrib import messages
 import routeros_api
 import clicksend_client
@@ -215,56 +217,6 @@ def send_sms_view(request):
         logger.error(f"Exception when calling SMSApi->sms_send_post: {e}")
     return HttpResponse("Message sent")
 
-@login_required
-@csrf_exempt
-def initiate_payment(request, id):
-    customer = Customer.objects.get(pk=id)
-    if request.method == "POST":
-        phone = request.POST["phone"].split('0', 1)[1]
-        amount = request.POST["amount"]
-        data = {
-            "BusinessShortCode": mpesa.get_business_shortcode(),
-            "Password": mpesa.generate_password(),
-            "Timestamp": mpesa.get_current_timestamp(),
-            "TransactionType": "CustomerPayBillOnline",
-            "Amount": customer.subscription_amount,
-            "PartyA": f"254{phone}",
-            "PartyB": mpesa.get_business_shortcode(),
-            "PhoneNumber": f"254{phone}",
-            "CallBackURL": mpesa.get_callback_url(),
-            "AccountReference": f"{customer.id}",
-            "TransactionDesc": "Payment for merchandise"
-        }
-        headers = mpesa.generate_request_headers()
-
-        try:
-            resp = requests.post(mpesa.get_payment_url(), json=data, headers=headers)
-            json_resp = resp.json()
-            if "ResponseCode" in json_resp and json_resp["ResponseCode"] == "0":
-                messages.success(request, "M-Pesa prompt sent successfully")
-                return render(request, 'await_payment.html', {'customer': customer})
-            else:
-                messages.error(request, "Failed to send M-Pesa prompt")
-        except Exception as e:
-            logger.error(f"Error initiating M-Pesa payment: {e}")
-            messages.error(request, "Error initiating payment. Please try again.")
-
-    return render(request, "payment.html", {"customer": customer})
-
-@login_required
-@csrf_exempt
-def callback(request, id):
-    customer = Customer.objects.get(pk=id)
-    try:
-        result = json.loads(request.body)
-        code = result["Body"]["stkCallback"]["ResultCode"]
-        if code == "0":
-            return render(request, 'success.html')
-    except Exception as e:
-        logger.error(f"Error handling M-Pesa callback: {e}")
-
-    return render(request, 'await_payment.html', {"customer": customer})
-
 
 @api_view(['GET'])
 def disable_customer(request):
@@ -320,5 +272,122 @@ def enable_customer(request):
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-def custom_404(request, exception):
-    return render(request, '404.html', status=404)
+
+@api_view(['GET'])
+def all_customers(request):
+    customers = Customer.objects.all()
+    serializer = CustomerSerializer(customers, many=True)
+    return Response({"customers": serializer.data})
+
+
+
+@api_view(['GET'])
+def get_customer_payments(request, customer_id):
+    customer = get_object_or_404(Customer, id=customer_id)
+    payments = Payment.objects.filter(customer=customer)
+    if payments:
+        serializer = PaymentSerializer(payments, many=True)
+        return Response({"Payments":serializer.data})
+    return Response("No payments found", status=status.HTTP_404_NOT_FOUND)
+
+
+def get_pesapal_token():
+    url = "https://pay.pesapal.com/v3/api/Auth/RequestToken"
+    body = {
+        "consumer_key":os.getenv('consumer_key'),
+        "consumer_secret":os.getenv('consumer_secret'),
+    }
+    response = requests.post(url, json=body,headers={'Content-Type': 'application/json', 'Accept': 'application/json'}).json()
+    print(response)
+    token = response['token']
+    return token
+
+
+@api_view(['POST'])
+def initiate_pesapal_payments(request):
+    customer_id = request.data.get('customer_id')
+    customer = get_object_or_404(Customer, id=customer_id)
+    amount = customer.subscription_amount
+    # Generate a unique merchant reference
+    merchant_reference = str(uuid.uuid4())
+    # Prepare the payload for Pesapal API
+    payload = {
+        "id": merchant_reference,
+        "currency": "KES",
+        "amount": float(customer.subscription_amount),
+        "description": f"Wi-Fi Subscription payment for {customer.name}",
+        "callback_url": "https://isp.phenom-ventures.com/callback",
+        "notification_id": "a4dfadb7-46b9-4350-8edd-dceffd1909b7",
+        "billing_address": {
+            "phone_number": customer.phone,
+            "first_name": customer.name.split()[0],
+        }
+    }
+    token = get_pesapal_token()
+
+    # Make a request to Pesapal API
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+    response = requests.post(
+        f"https://pay.pesapal.com/v3/api/Transactions/SubmitOrderRequest",
+        json=payload,
+        headers=headers
+    )
+
+    if response.status_code == 200:
+        pesapal_response = response.json()
+
+        # Create a new Payment object
+        payment = Payment.objects.create(
+            customer=customer.name,
+            amount=amount,
+            pesapal_transaction_tracking_id=pesapal_response['order_tracking_id'],
+            pesapal_merchant_reference=merchant_reference,
+            status='PENDING'
+        )
+
+        serializer = PaymentSerializer(payment)
+        return Response({
+            'payment': serializer.data,
+            'redirect_url': pesapal_response['redirect_url']
+        }, status=status.HTTP_201_CREATED)
+    else:
+        return Response({'error': 'Failed to initiate payment'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+def pesapal_callback(request):
+    order_tracking_id = request.data.get('OrderTrackingId')
+    merchant_reference = request.data.get('MerchantReference')
+
+    payment = get_object_or_404(Payment, pesapal_transaction_tracking_id=order_tracking_id,
+                                pesapal_merchant_reference=merchant_reference)
+    token = get_pesapal_token()
+
+    # Make a request to Pesapal API to get the transaction status
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+    response = requests.get(
+        f"https://pay.pesapal.com/api/Transactions/GetTransactionStatus?orderTrackingId={order_tracking_id}",
+        headers=headers
+    )
+
+    if response.status_code == 200:
+        pesapal_response = response.json()
+        payment.status = pesapal_response['payment_status_description']
+
+        if payment.status == 'COMPLETED':
+            payment.customer.last_payment = timezone.now()
+            payment.customer.subscription = True
+            payment.customer.save()
+
+        payment.save()
+
+        serializer = PaymentSerializer(payment)
+        return Response(serializer.data)
+    else:
+        return Response({'error': 'Failed to get transaction status'}, status=status.HTTP_400_BAD_REQUEST)

@@ -15,3 +15,20 @@ class Customer(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class Payment(models.Model):
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='payments')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    pesapal_transaction_tracking_id = models.CharField(max_length=100, unique=True)
+    pesapal_merchant_reference = models.CharField(max_length=100, unique=True)
+    payment_date = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, choices=[
+        ('PENDING', 'Pending'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed'),
+        ('INVALID', 'Invalid')
+    ], default='PENDING')
+
+    def __str__(self):
+        return f"{self.customer.name} - {self.amount} - {self.status}"
