@@ -7,20 +7,23 @@ import requests
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
 from django.http import HttpResponse, HttpResponseRedirect, HttpResponseServerError
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from requests.auth import HTTPBasicAuth
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from . import mpesa
-from .serializers import CustomerSerializer, PaymentSerializer
-from .tasks import check_subscription_status
+from djangoProject27 import settings
+from .serializers import CustomerSerializer, PaymentSerializer, SubscriptionSerializer, StaffSerializer
 from .forms import CustomerSignupForm, Signin_form, StaffSignupForm, StaffUpdateForm
-from .models import Customer, Payment
+from .models import Customer, Payment, Subscription
 from django.contrib import messages
 import routeros_api
 import clicksend_client
@@ -45,37 +48,79 @@ router_username = os.getenv('ROUTER_USERNAME')
 router_password = os.getenv('ROUTER_PASSWORD')
 
 
+#Connects to mikrotik router and the api variable is used globally for executing commands on the router
 def get_routeros_api():
     connection = routeros_api.RouterOsApiPool(router_ip, router_username, router_password, plaintext_login=True)
     api = connection.get_api()
     return api, connection
 
-@login_required
-def signup(request):
-    if request.method == 'POST':
-        form = CustomerSignupForm(request.POST)
-        if form.is_valid():
-            user = form.save(commit=False)
-            name = user.name
-            target = user.router_ip_address
-            bandwith = user.bandwith
-            bandwith_format = f"{bandwith}M/{bandwith}M"
-            api, connection = get_routeros_api()
-            try:
-                list_queues = api.get_resource('/queue/simple')
-                list_queues.add(name=name, target=target, max_limit=bandwith_format)
-                user.save()
-                messages.success(request, f"{user.name} successfully registered")
-            except Exception as e:
-                logger.error(f"Error while adding user to RouterOS queue: {e}")
-                messages.error(request, "Error registering user. Please try again.")
-            finally:
-                connection.disconnect()
-            return redirect('home')
-    else:
-        form = CustomerSignupForm()
 
-    return render(request, 'signup.html', {'form': form})
+@api_view(['POST'])
+#@permission_classes([IsAuthenticated])
+def create_customer(request):
+    """
+    API View to create a new customer and their subscription,
+    and add them to the RouterOS queue.
+    Requires the user to be authenticated.
+    """
+    form = CustomerSignupForm(request.data)
+    if form.is_valid():
+        customer = form.save()
+
+        # Extract Subscription-related data from the request
+        router_ip_address = request.data.get('router_ip_address', '192.168.88.1')
+        bandwidth = request.data.get('bandwidth')
+        subscription_amount = request.data.get('subscription_amount')
+        start_date = request.data.get('start_date')
+        thirty_days_later = timezone.now().date() + timezone.timedelta(days=30)
+        last_payment_date = request.data.get('last_payment_date')
+
+        bandwidth_format = f"{bandwidth}M/{bandwidth}M"
+
+        # Log the extracted data
+        logger.debug(
+            f"Customer data: {customer.name}, Subscription data: router_ip_address={router_ip_address}, bandwidth={bandwidth}, subscription_amount={subscription_amount}")
+
+        api, connection = get_routeros_api()
+        try:
+            # Interact with RouterOS API to add the customer to the queue
+            list_queues = api.get_resource('/queue/simple')
+            list_queues.add(name=customer.name, target=router_ip_address, max_limit=bandwidth_format)
+
+            # Create the Subscription
+            subscription = Subscription.objects.create(
+                customer=customer,
+                router_ip_address=router_ip_address,
+                bandwidth=bandwidth,
+                subscription_amount=subscription_amount,
+                is_active=True,  # Assuming the subscription starts as active
+                start_date=start_date,
+                end_date=thirty_days_later,
+                last_payment_date=last_payment_date
+            )
+
+            # Log success and return response
+            logger.info(
+                f"Customer {customer.name} and subscription {subscription.id} successfully created and added to "
+                f"RouterOS queue")
+            return Response({"detail": f"{customer.name} and subscription successfully registered"},
+                            status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            # Log the error and return an error response
+            logger.error(f"Error while adding customer to RouterOS queue: {e}")
+            return Response({"error": "Error registering customer. Please try again."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        finally:
+            # Ensure the connection is properly closed
+            connection.disconnect()
+            logger.debug("RouterOS API connection closed")
+
+    else:
+        # Log form errors and return a bad request response
+        logger.warning(f"Form validation failed: {form.errors}")
+        return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 def signin(request):
@@ -92,329 +137,517 @@ def signin(request):
                 messages.error(request, 'Username or password incorrect')
     return render(request, 'login.html', {'form': Signin_form()})
 
-@login_required
-def home(request):
+@api_view(['GET'])
+#@permission_classes([IsAuthenticated])
+def get_customers(request):
+    """
+    API View to get a list of customers from RouterOS queue.
+    Requires the user to be authenticated.
+    """
+    # Establish connection with RouterOS API
+    api, connection = get_routeros_api()
     try:
-        api, connection = get_routeros_api()
+        # Fetch customers from RouterOS API
         list_queues = api.get_resource('/queue/simple')
         customers = list_queues.get()
-    except Exception as e:
-        logger.error(f"Error fetching customers from RouterOS: {e}")
-        return HttpResponseServerError(e)
-    return render(request, 'home.html', {'customers': customers})
 
-@login_required
+        # Get all customer names from RouterOS
+        customer_names = [customer.get('name') for customer in customers]
+
+        # Fetch customers from the database that match the names from RouterOS
+        db_customers = Customer.objects.filter(name__in=customer_names).prefetch_related('subscriptions')
+
+        # Create a dictionary mapping names to customer objects
+        name_to_customer = {customer.name: customer for customer in db_customers}
+
+        # Convert RouterOS response to a suitable format and append database data
+        customers_data = []
+        for customer in customers:
+            db_customer = name_to_customer.get(customer.get('name'))
+
+            # Construct customer data dictionary
+            customer_data = {
+                'routeros_id': customer.get('id'),
+                'name': customer.get('name'),
+                'target': customer.get('target'),
+                'max_limit': customer.get('max_limit'),
+                'db_id': db_customer.id if db_customer else None,
+                'phone': db_customer.phone if db_customer else None,
+                'email': db_customer.email if db_customer else None,
+                'balance': str(db_customer.balance) if db_customer else None,  # Convert Decimal to string
+                'last_updated': db_customer.last_updated if db_customer else None,
+                'subscriptions': []
+            }
+
+            # Append subscription details if customer exists in the database
+            if db_customer:
+                for subscription in db_customer.subscriptions.all():
+                    customer_data['subscriptions'].append({
+                        'router_ip_address': subscription.router_ip_address,
+                        'bandwidth': subscription.bandwidth,
+                        'subscription_amount': str(subscription.subscription_amount),  # Convert Decimal to string
+                        'is_active': subscription.is_active,
+                        'start_date': subscription.start_date,
+                        'end_date': subscription.end_date,
+                        'last_payment_date': subscription.last_payment_date,
+                    })
+
+            # Add the constructed data to the customers_data list
+            customers_data.append(customer_data)
+
+        logger.info("Successfully fetched customers from RouterOS and database")
+        return Response(customers_data, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        # Log the error and return a server error response
+        logger.error(f"Error fetching customers from RouterOS or database: {e}")
+        return Response({"error": "Error fetching customers"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    finally:
+        # Ensure the connection is properly closed
+        if 'connection' in locals():
+            connection.disconnect()
+            logger.debug("RouterOS API connection closed")
+
+@api_view(['GET'])
+#@permission_classes([IsAuthenticated])
 def view_customer(request, id):
-    try:
-        api, connection = get_routeros_api()
-        list_queues = api.get_resource('/queue/simple')
-        customer = list_queues.get(id=id)
-        user_names = [i['name'] for i in customer]
-        users = Customer.objects.filter(name__in=user_names)
-        details = [
-            {'id': user.id, 'name': user.name, 'email': user.email, 'phone': user.phone, 'status': user.subscription,
-             'last_payment': user.last_payment} for user in users]
-    except Exception as e:
-        logger.error(f"Error fetching customer details: {e}")
-        return HttpResponseServerError(e)
-    return render(request, 'customer.html', {'customer': customer, 'details': details})
+    """
+    API endpoint that allows viewing a customer's details.
 
-@login_required
+    :param request: The HTTP request object
+    :param id: The ID of the customer to retrieve
+    :return: Response object with customer data or error message
+    """
+    try:
+        # Fetch the customer by ID
+        logger.info(f"Attempting to fetch details for customer ID: {id}")
+        customer = Customer.objects.get(id=id)
+
+        # Fetch the subscriptions for the customer
+        subscriptions = customer.subscriptions.all()
+
+        # Construct the customer data dictionary
+        customer_data = {
+            'routeros_id': customer.name,  # Using 'name' as 'routeros_id'
+            'name': customer.name,
+            'target': '',  # Placeholder if you have no equivalent field
+            'max_limit': '',  # Placeholder if you have no equivalent field
+            'db_id': customer.id,
+            'phone': customer.phone,
+            'email': customer.email,
+            'balance': str(customer.balance),  # Convert Decimal to string
+            'last_updated': customer.last_updated,
+            'subscriptions': []
+        }
+
+        # Append subscription details
+        for subscription in subscriptions:
+            customer_data['subscriptions'].append({
+                'router_ip_address': subscription.router_ip_address,
+                'bandwidth': subscription.bandwidth,
+                'subscription_amount': str(subscription.subscription_amount),  # Convert Decimal to string
+                'is_active': subscription.is_active,
+                'start_date': subscription.start_date,
+                'end_date': subscription.end_date,
+                'last_payment_date': subscription.last_payment_date,
+            })
+
+        logger.info(f"Successfully retrieved details for customer ID: {id}")
+        return Response(customer_data, status=status.HTTP_200_OK)
+
+    except ObjectDoesNotExist:
+        logger.warning(f"Customer with ID {id} not found")
+        return Response({"error": "Customer not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    except Exception as e:
+        logger.error(f"Error fetching customer details for ID {id}: {str(e)}", exc_info=True)
+        return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['PUT'])
+#@permission_classes([IsAuthenticated])
 def update_customer(request, id):
+    """
+    API endpoint to update a customer's details, associated RouterOS queue, and subscription.
+
+    :param request: The HTTP request object
+    :param id: The ID of the customer to update
+    :return: Response object with updated customer data or error message
+    """
+    logger.info(f"Attempting to update customer with ID: {id}")
+    api = None
+    connection = None
+
     try:
-        customer = Customer.objects.get(pk=id)
-        api, connection = get_routeros_api()
-        list_queues = api.get_resource('/queue/simple')
-        user = list_queues.get(name=customer.name)
-        user_id = [i['id'] for i in user]
-        if request.method == 'POST':
-            form = CustomerSignupForm(request.POST, instance=customer)
-            if form.is_valid():
-                name = form.cleaned_data['name']
-                target = form.cleaned_data['router_ip_address']
-                bandwith = form.cleaned_data['bandwith']
-                bandwith_format = f"{bandwith}M/{bandwith}M"
-                list_queues.set(id=user_id[0], name=name, target=target, max_limit=bandwith_format)
-                form.save()
-                messages.success(request, f"{name} successfully updated")
-                return HttpResponseRedirect(reverse('view_customer', args=[user_id[0]]))
-        else:
-            form = CustomerSignupForm(instance=customer)
+        with transaction.atomic():
+            # Fetch the customer from the database
+            customer = Customer.objects.get(pk=id)
+            logger.debug(f"Customer {customer.name} found in database")
+
+            # Fetch the associated subscription
+            subscription = Subscription.objects.filter(customer=customer, is_active=True).first()
+            if not subscription:
+                logger.warning(f"No active subscription found for customer {customer.name}")
+                return Response({"error": "No active subscription found for this customer"},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            # Connect to RouterOS API
+            api, connection = get_routeros_api()
+            list_queues = api.get_resource('/queue/simple')
+
+            # Find the corresponding RouterOS queue
+            user = list_queues.get(name=customer.name)
+            user_id = [i['id'] for i in user]
+            logger.debug(f"Found RouterOS queue for customer: {customer.name}")
+
+            # Validate and update the customer data
+            customer_serializer = CustomerSerializer(customer, data=request.data, partial=True)
+            subscription_serializer = SubscriptionSerializer(subscription, data=request.data, partial=True)
+
+            if customer_serializer.is_valid() and subscription_serializer.is_valid():
+                name = customer_serializer.validated_data.get('name', customer.name)
+                target = subscription_serializer.validated_data.get('router_ip_address', subscription.router_ip_address)
+                bandwidth = subscription_serializer.validated_data.get('bandwidth', subscription.bandwidth)
+
+                # Update RouterOS queue if necessary
+                if target or bandwidth:
+                    bandwidth_format = f"{bandwidth}M/{bandwidth}M"
+                    list_queues.set(id=user_id[0], name=name, target=target, max_limit=bandwidth_format)
+                    logger.info(f"Updated RouterOS queue for customer: {name}")
+
+                # Save the updated customer data
+                updated_customer = customer_serializer.save()
+                updated_subscription = subscription_serializer.save()
+
+                logger.info(f"Successfully updated customer: {updated_customer.name} and subscription")
+
+                # Combine the serialized data
+                response_data = {
+                    "customer": CustomerSerializer(updated_customer).data,
+                    "subscription": SubscriptionSerializer(updated_subscription).data
+                }
+
+                return Response(response_data, status=status.HTTP_200_OK)
+            else:
+                errors = {}
+                if not customer_serializer.is_valid():
+                    errors['customer'] = customer_serializer.errors
+                if not subscription_serializer.is_valid():
+                    errors['subscription'] = subscription_serializer.errors
+                logger.warning(f"Invalid data for customer/subscription update: {errors}")
+                return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+    except ObjectDoesNotExist:
+        logger.warning(f"Customer with ID {id} not found")
+        return Response({"error": "Customer not found"}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
-        logger.error(f"Error updating customer: {e}")
-        return HttpResponseServerError(e)
+        logger.error(f"Error updating customer with ID {id}: {str(e)}", exc_info=True)
+        return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        if connection:
+            logger.debug("Closing RouterOS API connection")
+            connection.disconnect()
 
-    return render(request, 'signup.html', {'form': form})
 
-@login_required
+@api_view(['POST'])
+#@permission_classes([IsAuthenticated])
 def signout(request):
-    logout(request)
-    return redirect("signin")
+    """
+    API endpoint to sign out a user.
 
-@login_required
+    :param request: The HTTP request object
+    :return: Response object with success message
+    """
+    logger.info(f"User {request.user.username} attempting to sign out")
+    logout(request)
+    logger.info(f"User successfully signed out")
+    return Response({"message": "Successfully signed out"}, status=status.HTTP_200_OK)
+
+
+@api_view(['DELETE'])
+#@permission_classes([IsAuthenticated])
 def delete_customer(request, id):
+    """
+    API endpoint to delete a customer and their associated RouterOS queue.
+
+    :param request: The HTTP request object
+    :param id: The ID of the customer to delete
+    :return: Response object with success message or error message
+    """
+    logger.info(f"Attempting to delete customer with ID: {id}")
+    api = None
+    connection = None
+
     try:
+        # Fetch the customer from the database
         customer = Customer.objects.get(pk=id)
+        logger.debug(f"Customer {customer.name} found in database")
+
+        # Connect to RouterOS API
         api, connection = get_routeros_api()
         list_queues = api.get_resource('/queue/simple')
+
+        # Find and remove the corresponding RouterOS queue
         user = list_queues.get(name=customer.name)
         user_id = [i['id'] for i in user]
         list_queues.remove(id=user_id[0])
+        logger.info(f"Removed RouterOS queue for customer: {customer.name}")
+
+        # Delete the customer from the database
         customer.delete()
-        messages.success(request, "Successfully deleted")
+        logger.info(f"Successfully deleted customer: {customer.name}")
+
+        return Response({"message": "Customer successfully deleted"}, status=status.HTTP_200_OK)
+
+    except ObjectDoesNotExist:
+        logger.warning(f"Customer with ID {id} not found")
+        return Response({"error": "Customer not found"}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
-        logger.error(f"Error deleting customer: {e}")
-        return HttpResponseServerError(e)
+        logger.error(f"Error deleting customer with ID {id}: {str(e)}", exc_info=True)
+        return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        if connection:
+            logger.debug("Closing RouterOS API connection")
+            connection.disconnect()
 
-    return redirect('home')
 
-@login_required
-def staff_signup(request):
-    if request.method == 'POST':
-        form = StaffSignupForm(request.POST)
-        if form.is_valid():
-            user = form.save()
-            permissions = form.cleaned_data['permissions']
-            user.user_permissions.set(permissions)
-            return redirect('view_staff')
-    else:
-        form = StaffSignupForm()
-    return render(request, 'signup.html', {'form': form})
-
-@login_required
+@api_view(['GET'])
+#@permission_classes([IsAuthenticated])
 def view_staff(request):
-    staff = User.objects.all()
-    return render(request, 'staff.html', {'staff': staff})
+    """
+    Retrieve a list of all staff members.
+    """
+    logger.info(f"User {request.user.username} accessed the staff list.")
+    staff = User.objects.filter(is_staff=True)
+    serializer = StaffSerializer(staff, many=True)
+    return Response(serializer.data)
 
-@login_required
+@api_view(['GET'])
+#@permission_classes([IsAuthenticated])
 def edit_staff_page(request, id):
-    staff = User.objects.get(pk=id)
-    staff_permissions = staff.get_all_permissions()
-    return render(request, 'view_staff.html', {'staff': staff, 'permissions': staff_permissions})
+    """
+    Retrieve details of a specific staff member, including their permissions.
+    """
+    logger.info(f"User {request.user.username} accessed edit page for staff ID {id}.")
+    staff = get_object_or_404(User, pk=id, is_staff=True)
+    serializer = StaffSerializer(staff)
+    return Response(serializer.data)
 
-@login_required
+@api_view(['PUT'])
+#@permission_classes([IsAuthenticated])
 def update_staff(request, id):
-    staff = get_object_or_404(User, pk=id)
-    if request.method == 'POST':
-        form = StaffUpdateForm(request.POST, instance=staff)
-        if form.is_valid():
-            form.save()
-            return redirect('view_staff')
-    else:
-        form = StaffUpdateForm(instance=staff)
-    return render(request, 'signup.html', {'form': form})
-
-@login_required
-def send_sms_view(request):
-    sms_message = SmsMessage(
-        source="php",
-        body="This is a test message.",
-        to="+254712240197",
-        schedule=1436874701
-    )
-    sms_messages = clicksend_client.SmsMessageCollection(messages=[sms_message])
-    try:
-        api_response = api_instance.sms_send_post(sms_messages)
-        logger.info(f"SMS sent successfully: {api_response}")
-    except ApiException as e:
-        logger.error(f"Exception when calling SMSApi->sms_send_post: {e}")
-    return HttpResponse("Message sent")
-
-
-@api_view(['GET'])
-def disable_customer(request):
-    try:
-        customers = Customer.objects.all()
-        disabled_customers = []
-        for customer in customers:
-            days_since_last_payment = (timezone.now() - customer.last_payment).days
-            if days_since_last_payment >= 30:
-                if customer.balance >= customer.subscription_amount:
-                    customer.balance -= customer.subscription_amount
-                    customer.last_payment = timezone.now()
-                    customer.subscription = True
-                    customer.save()
-                else:
-                    customer.subscription = False
-                    api, connection = get_routeros_api()
-                    list_queues = api.get_resource('/queue/simple')
-                    list_queues.set(name=customer.name, max_limit="1k/1k")
-                    customer.save()
-                    disabled_customers.append(customer.name)
-                    connection.disconnect()
-        if disabled_customers:
-            return Response({"message": f"The following customers have been disabled: {', '.join(disabled_customers)}"},
-                            status=status.HTTP_200_OK)
-        else:
-            return Response({"message": "No customers have been disabled"}, status=status.HTTP_200_OK)
-    except Exception as e:
-        logger.error(f"Error disabling customers: {e}")
-        return Response({"message": "An error occurred while processing the request"},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['GET'])
-def enable_customer(request):
-    try:
-        customers = Customer.objects.filter(subscription=False)
-        disabled_customers = []
-        for customer in customers:
-            days_since_last_payment = (timezone.now() - customer.last_payment).days
-            if days_since_last_payment < 31:
-                customer.subscription = True
-                api, connection = get_routeros_api()
-                list_queues = api.get_resource('/queue/simple')
-                bandwith = customer.bandwith
-                bandwith_format = f"{bandwith}M/{bandwith}M"
-                list_queues.set(name=customer.name, max_limit=bandwith_format)
-                customer.save()
-                disabled_customers.append(customer.name)
-                connection.disconnect()
-        if disabled_customers:
-            return Response({"message": f"The following customers have been enabled: {', '.join(disabled_customers)}"},
-                            status=status.HTTP_200_OK)
-        else:
-            return Response({"message": "No customers have been enabled"}, status=status.HTTP_200_OK)
-    except Exception as e:
-        logger.error(f"Error enabling customers: {e}")
-        return Response({"message": e},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
-@api_view(['GET'])
-def all_customers(request):
-    customers = Customer.objects.all()
-    serializer = CustomerSerializer(customers, many=True)
-    return Response({"customers": serializer.data})
-
-
-
-@api_view(['GET'])
-def get_customer_payments(request, customer_id):
-    customer = get_object_or_404(Customer, id=customer_id)
-    payments = Payment.objects.filter(customer=customer)
-    if payments:
-        serializer = PaymentSerializer(payments, many=True)
-        return Response({"Payments":serializer.data,"Balance": customer.balance})
-    return Response("No payments found", status=status.HTTP_404_NOT_FOUND)
-
-
-def get_pesapal_token():
-    url = "https://pay.pesapal.com/v3/api/Auth/RequestToken"
-    consumer_key = os.getenv('CONSUMER_KEY')
-    consumer_secret = os.getenv('CONSUMER_SECRET')
-    if not consumer_key or not consumer_secret:
-        print("Environment variables not set properly")
-        raise ValueError("Missing CONSUMER_KEY or CONSUMER_SECRET")
-    #print("Consumer Key:", consumer_key)
-    #print("Consumer Secret:", consumer_secret)
-    body = {
-        "consumer_key": f"{consumer_key}",
-        "consumer_secret": f"{consumer_secret}",
-    }
-    response = requests.post(url, json=body,headers={'Content-Type': 'application/json', 'Accept': 'application/json'}).json()
-    print(response)
-    token = response['token']
-    return token
-
-
-@api_view(['POST'])
-def initiate_pesapal_payments(request):
-    customer_id = request.data.get('customer_id')
-    customer = get_object_or_404(Customer, id=customer_id)
-    amount = customer.subscription_amount
-    # Generate a unique merchant reference
-    merchant_reference = str(uuid.uuid4())
-    # Prepare the payload for Pesapal API
-    payload = {
-        "id": merchant_reference,
-        "currency": "KES",
-        "amount": float(customer.subscription_amount),
-        "description": f"Wi-Fi Subscription payment for {customer.name}",
-        "callback_url": "https://payment-coral-one.vercel.app/callback",
-        "notification_id": "670b6eeb-289d-4a90-9372-dcefa6f71d44",
-        "billing_address": {
-            "phone_number": customer.phone,
-            "first_name": customer.name.split()[0],
-        }
-    }
-    token = get_pesapal_token()
-
-    # Make a request to Pesapal API
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}"
-    }
-    response = requests.post(
-        f"https://pay.pesapal.com/v3/api/Transactions/SubmitOrderRequest",
-        json=payload,
-        headers=headers
-    )
-
-    if response.status_code == 200:
-        pesapal_response = response.json()
-
-        # Create a new Payment object
-        payment = Payment.objects.create(
-            customer=customer,
-            amount=amount,
-            pesapal_transaction_tracking_id=pesapal_response['order_tracking_id'],
-            pesapal_merchant_reference=merchant_reference,
-            status='PENDING'
-        )
-
-        serializer = PaymentSerializer(payment)
-        return Response({
-            'payment': serializer.data,
-            'redirect_url': pesapal_response['redirect_url']
-        }, status=status.HTTP_201_CREATED)
-    else:
-        return Response({'error': 'Failed to initiate payment'}, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(['POST'])
-def pesapal_callback(request):
-    order_tracking_id = request.data.get('OrderTrackingId')
-    merchant_reference = request.data.get('MerchantReference')
-    print(order_tracking_id)
-    payment = get_object_or_404(Payment, pesapal_transaction_tracking_id=order_tracking_id,
-                                pesapal_merchant_reference=merchant_reference)
-    token = get_pesapal_token()
-
-    # Make a request to Pesapal API to get the transaction status
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json"
-    }
-    response = requests.get(
-        f"https://pay.pesapal.com/v3/api/Transactions/GetTransactionStatus?orderTrackingId={order_tracking_id}",
-        headers=headers
-    )
-
-    if response.status_code == 200:
-        pesapal_response = response.json()
-        print(pesapal_response)
-        payment.status = pesapal_response['payment_status_description']
-
-        if payment.status == 'Completed':
-            if payment.customer.subscription:
-                payment.customer.balance += int(pesapal_response['amount'])
-                payment.status = 'COMPLETED'
-                payment.customer.save()
-            else:
-                payment.customer.last_payment = timezone.now()
-                payment.customer.subscription = True
-                payment.customer.balance = int(payment.customer.subscription_amount) - int(pesapal_response['amount'])
-                payment.status = 'COMPLETED'
-
-                payment.customer.save()
-
-        payment.save()
-        print(payment.customer.balance)
-
-        serializer = PaymentSerializer(payment)
+    """
+    Update details of a specific staff member.
+    """
+    logger.info(f"User {request.user.username} attempted to update staff ID {id}.")
+    staff = get_object_or_404(User, pk=id, is_staff=True)
+    serializer = StaffSerializer(staff, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        logger.info(f"Staff ID {id} updated successfully.")
         return Response(serializer.data)
-    else:
-        return Response({'error': 'Failed to get transaction status'}, status=status.HTTP_400_BAD_REQUEST)
+    logger.warning(f"Failed to update staff ID {id}. Errors: {serializer.errors}")
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+#@permission_classes([IsAuthenticated])
+def staff_signup(request):
+    """
+    Create a new staff member.
+    """
+    logger.info(f"User {request.user.username} attempted to create a new staff member.")
+    serializer = StaffSerializer(data=request.data)
+    if serializer.is_valid():
+        user = serializer.save()
+        logger.info(f"New staff member created with ID {user.id}.")
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    logger.warning(f"Failed to create new staff member. Errors: {serializer.errors}")
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+def enable_customer_in_routeros(subscription):
+    """
+    Helper function to enable a customer in RouterOS.
+    """
+    api, connection = get_routeros_api()
+    try:
+        list_queues = api.get_resource('/queue/simple')
+        bandwidth_value = subscription.bandwidth.rstrip('M')  # Remove 'M' if present
+        bandwidth_format = f"{bandwidth_value}M/{bandwidth_value}M"
+        list_queues.set(name=subscription.customer.name, max_limit=bandwidth_format)
+        logger.info(f"Enabled customer in RouterOS: {subscription.customer.name}")
+    except Exception as e:
+        logger.error(f"Error enabling customer in RouterOS: {str(e)}")
+        raise
+    finally:
+        connection.disconnect()
+
+
+def disable_customer_in_routeros(subscription):
+    """
+    Helper function to disable a customer in RouterOS.
+    """
+    api, connection = get_routeros_api()
+    try:
+        list_queues = api.get_resource('/queue/simple')
+        list_queues.set(name=subscription.customer.name, max_limit="1k/1k")
+        logger.info(f"Disabled customer in RouterOS: {subscription.customer.name}")
+    except Exception as e:
+        logger.error(f"Error disabling customer in RouterOS: {str(e)}")
+        raise
+    finally:
+        connection.disconnect()
+
+
+@api_view(['GET'])
+def process_subscriptions(request):
+    """
+    API view to process all active subscriptions that are due for payment.
+    Checks if 30 days have passed since the last payment, then checks balance,
+    deducts subscription amount if sufficient, and manages RouterOS accordingly.
+    """
+    try:
+        with transaction.atomic():
+            current_date = timezone.now().date()
+            subscriptions = Subscription.objects.filter(
+                is_active=True,
+                end_date__lte=current_date
+            ).select_related('customer')
+
+            processed_count = 0
+            disabled_count = 0
+
+            for subscription in subscriptions:
+                customer = subscription.customer
+
+                if customer.balance >= subscription.subscription_amount:
+                    # Sufficient balance, deduct subscription amount
+                    customer.balance -= subscription.subscription_amount
+                    customer.last_updated = timezone.now()
+                    subscription.last_payment_date = timezone.now()
+
+                    # Set end_date to 30 days from now
+                    subscription.end_date = current_date + timezone.timedelta(days=30)
+
+                    customer.save()
+                    subscription.save()
+
+                    # Enable customer in RouterOS
+                    enable_customer_in_routeros(subscription)
+                    processed_count += 1
+                    logger.info(f"Processed subscription for customer: {customer.name}")
+                else:
+                    # Insufficient balance, disable subscription
+                    subscription.is_active = False
+                    subscription.end_date = current_date
+                    subscription.save()
+
+                    # Disable customer in RouterOS
+                    disable_customer_in_routeros(subscription)
+                    disabled_count += 1
+                    logger.info(f"Disabled subscription for customer: {customer.name} due to insufficient balance")
+
+        message = f"Processed {processed_count} subscriptions, disabled {disabled_count} subscriptions"
+        logger.info(message)
+        return Response({"message": message}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error processing subscriptions: {str(e)}")
+        return Response({"error": "An error occurred while processing subscriptions"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+'''def get_access_token():
+    """
+    Fetch an access token from the M-Pesa API.
+
+    Returns:
+        str: The validated access token.
+
+    Raises:
+        requests.RequestException: If the API request fails.
+        KeyError: If the response doesn't contain an access token.
+    """
+    try:
+        consumer_key = settings.MPESA_CONSUMER_KEY
+        consumer_secret = settings.MPESA_CONSUMER_SECRET
+        api_url = "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+
+        response = requests.get(api_url, auth=HTTPBasicAuth(consumer_key, consumer_secret))
+        response.raise_for_status()  # Raise an exception for HTTP errors
+
+        mpesa_access_token = response.json()
+        validated_mpesa_access_token = mpesa_access_token["access_token"]
+
+        logger.info("Successfully obtained M-Pesa access token")
+        return validated_mpesa_access_token
+
+    except requests.RequestException as e:
+        logger.error(f"Failed to obtain M-Pesa access token: {str(e)}")
+        raise
+    except KeyError as e:
+        logger.error(f"M-Pesa API response missing access token: {str(e)}")
+        raise
+
+
+@api_view(['POST'])
+def register_c2b_url(request):
+    """
+    Register C2B URL with M-Pesa API.
+
+    Returns:
+        Response: Django Rest Framework Response object with the API response or error message.
+    """
+    try:
+        access_token = get_access_token()
+        api_url = "https://sandbox.safaricom.co.ke/mpesa/c2b/v1/registerurl"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        payload = {
+            "ShortCode": settings.MPESA_SHORTCODE,
+            "ResponseType": "Cancelled",
+            "ConfirmationURL": "https://0ca9-197-237-125-244.ngrok-free.app/api/confirmation/",
+            "ValidationURL": "https://0ca9-197-237-125-244.ngrok-free.app/api/c2b/validation/"
+        }
+
+        logger.info("Sending C2B URL registration request to M-Pesa API")
+        response = requests.post(api_url, json=payload, headers=headers)
+        response.raise_for_status()
+
+        logger.info("Successfully registered C2B URL with M-Pesa API")
+        return Response(response.json(), status=status.HTTP_200_OK)
+    except requests.RequestException as e:
+
+        logger.error(f"Failed to register C2B URL with M-Pesa API: {str(e)}")
+
+        logger.error(f"Response status code: {e.response.status_code if e.response else 'N/A'}")
+
+        logger.error(f"Response content: {e.response.content if e.response else 'N/A'}")
+
+        return Response({'error': 'Failed to communicate with M-Pesa API'}, status=status.HTTP_502_BAD_GATEWAY)
+    except Exception as e:
+
+        logger.exception(f"Unexpected error in register_c2b_url: {str(e)}")
+
+        return Response({'error': 'An unexpected error occurred'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+def c2b_confirmation(request):
+    # Get the data from the request
+    data = request.data
+    print(data)
+    # Process the confirmation data
+    amount = data['TransAmount']
+    transaction_id = data['TransID']
+    phone_number = data['MSISDN']
+
+    # Add  logic to handle the confirmation
+
+    # Return a response to M-Pesa
+    return Response({
+        "ResultCode": 0,
+        "ResultDesc": "Confirmation received successfully"
+    })
+'''

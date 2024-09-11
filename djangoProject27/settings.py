@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 import os
+from datetime import timedelta
 from pathlib import Path
 from django.contrib import messages
 from celery.schedules import crontab
@@ -50,8 +51,18 @@ INSTALLED_APPS = [
     'django.contrib.humanize',
     "rest_framework",
     "corsheaders",
+    'rest_framework_simplejwt'
 ]
 CORS_ALLOW_ALL_ORIGINS = True
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+
+    ],
+}
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=7),
+}
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -172,15 +183,10 @@ MESSAGE_TAGS = {
     messages.ERROR: 'alert alert-danger alert-dismissible fade show',
 }
 
-MPESA_API = {
-    "BIZ_SHORT_CODE": os.getenv('BIZ_SHORT_CODE'),
-    "CALLBACK_URL": os.getenv('CALLBACK_URL'),
-    "CONSUMER_KEY": os.getenv('CONSUMER_KEY'),
-    "CONSUMER_SECRET": os.getenv('CONSUMER_SECRET'),
-    "CREDENTIALS_URL": os.getenv('CREDENTIALS_URL'),
-    "PAYMENT_URL":os.getenv('PAYMENT_URL'),
-    "PASS_KEY": os.getenv('PASS_KEY'),
-}
+#MPESA_CONSUMER_KEY = os.getenv('CONSUMER_KEY')
+#MPESA_CONSUMER_SECRET = ''
+#MPESA_SHORTCODE = ''
+#MPESA_PASSKEY = 'your_passkey'
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 465
