@@ -451,6 +451,24 @@ def update_staff(request, id):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+@api_view(['DELETE'])
+# @permission_classes([IsAuthenticated])
+def delete_staff(request, id):
+    """
+    Delete a specific staff member.
+    """
+    logger.info(f"User {request.user.username} attempted to delete staff ID {id}.")
+
+    # Get the staff user
+    staff = get_object_or_404(User, pk=id, is_staff=True)
+
+    # Deleting the staff user
+    staff.delete()
+    logger.info(f"Staff ID {id} deleted successfully.")
+
+    # Return a success response
+    return Response({"detail": f"Staff ID {id} deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+
 @api_view(['POST'])
 #@permission_classes([IsAuthenticated])
 def staff_signup(request):
